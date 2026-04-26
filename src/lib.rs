@@ -1,9 +1,9 @@
-use std::error::Error;
-use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::{Client, ClientBuilder};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::error::Error;
+use std::time::Duration;
 use tracing::{info, warn};
 
 // Default timeout in seconds if none is specified
@@ -40,7 +40,11 @@ pub trait RpcClient {
     async fn call_wallet(&self, method: &str, params: &[Value]) -> Result<Value, SyscoinError>;
 
     /// Get wallet balance with optional account and watchonly parameters
-    async fn get_balance(&self, account: Option<&str>, include_watchonly: Option<bool>) -> Result<f64, SyscoinError>;
+    async fn get_balance(
+        &self,
+        account: Option<&str>,
+        include_watchonly: Option<bool>,
+    ) -> Result<f64, SyscoinError>;
 
     /// Make an HTTP GET request to the specified URL
     async fn http_get(&self, url: &str) -> Result<Vec<u8>, SyscoinError>;
@@ -58,7 +62,13 @@ pub struct RealRpcClient {
 
 impl RealRpcClient {
     /// Create a new RPC client with default timeout
-    pub fn new(rpc_url: &str, rpc_user: &str, rpc_password: &str, timeout: Option<Duration>, wallet_name: &str) -> Result<Self, SyscoinError> {
+    pub fn new(
+        rpc_url: &str,
+        rpc_user: &str,
+        rpc_password: &str,
+        timeout: Option<Duration>,
+        wallet_name: &str,
+    ) -> Result<Self, SyscoinError> {
         Self::new_with_timeout(rpc_url, rpc_user, rpc_password, timeout, wallet_name)
     }
 
@@ -103,7 +113,8 @@ impl RealRpcClient {
         });
 
         // fire the HTTP call
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(&self.rpc_url)
             .basic_auth(&self.rpc_user, Some(&self.rpc_password))
             .json(&request_body)
@@ -113,17 +124,14 @@ impl RealRpcClient {
 
         // pull the entire body into a String
         let status = resp.status();
-        let body   = resp.text().await?;
+        let body = resp.text().await?;
 
         // log whatever the node actually sent us
         info!("RPC `{}` → HTTP {}:\n{}", method, status, body);
 
         // if it wasn’t a 200, include the body in our Err
         if !status.is_success() {
-            return Err(format!(
-                "HTTP error: {} returned body: {}",
-                status, body
-            ).into());
+            return Err(format!("HTTP error: {} returned body: {}", status, body).into());
         }
 
         // now parse the JSON-RPC envelope from the text
@@ -133,11 +141,16 @@ impl RealRpcClient {
             return Err(format!("RPC error: {}", err).into());
         }
 
-        jr.result.ok_or_else(|| "missing result in JSON-RPC response".into())
+        jr.result
+            .ok_or_else(|| "missing result in JSON-RPC response".into())
     }
 
     /// Like `rpc_request`, but points at `/wallet/{wallet_name}` on the node
-    async fn wallet_rpc_request(&self, method: &str, params: &[Value]) -> Result<Value, SyscoinError> {
+    async fn wallet_rpc_request(
+        &self,
+        method: &str,
+        params: &[Value],
+    ) -> Result<Value, SyscoinError> {
         // build the JSON-RPC envelope
         let request_body = json!({
             "jsonrpc": "2.0",
@@ -148,10 +161,11 @@ impl RealRpcClient {
 
         // compute the wallet-specific URL
         let base = self.rpc_url.trim_end_matches('/');
-        let url  = format!("{}/wallet/{}", base, self.wallet_name);
+        let url = format!("{}/wallet/{}", base, self.wallet_name);
 
         // fire the HTTP call
-        let resp   = self.http_client
+        let resp = self
+            .http_client
             .post(&url)
             .basic_auth(&self.rpc_user, Some(&self.rpc_password))
             .json(&request_body)
@@ -161,17 +175,14 @@ impl RealRpcClient {
 
         // pull the entire body into a String
         let status = resp.status();
-        let body   = resp.text().await?;
+        let body = resp.text().await?;
 
         // log whatever the node actually sent us
         info!("WALLET RPC `{}` → HTTP {}:\n{}", method, status, body);
 
         // if it wasn’t a 200, include the body in our Err
         if !status.is_success() {
-            return Err(format!(
-                "HTTP error: {} returned body: {}",
-                status, body
-            ).into());
+            return Err(format!("HTTP error: {} returned body: {}", status, body).into());
         }
 
         // now parse the JSON-RPC envelope
@@ -183,9 +194,9 @@ impl RealRpcClient {
         }
 
         // otherwise grab the result or error out if missing
-        jr.result.ok_or_else(|| "missing result in JSON-RPC response".into())
+        jr.result
+            .ok_or_else(|| "missing result in JSON-RPC response".into())
     }
-
 
     /// Create or load a wallet by name
     pub async fn create_or_load_wallet(&self, wallet_name: &str) -> Result<(), SyscoinError> {
@@ -213,7 +224,6 @@ impl RealRpcClient {
         }
     }
 
-
     /// Expose the configured wallet name
     pub fn wallet_name(&self) -> &str {
         &self.wallet_name
@@ -230,7 +240,11 @@ impl RpcClient for RealRpcClient {
         self.wallet_rpc_request(method, params).await
     }
 
-    async fn get_balance(&self, account: Option<&str>, include_watchonly: Option<bool>) -> Result<f64, SyscoinError> {
+    async fn get_balance(
+        &self,
+        account: Option<&str>,
+        include_watchonly: Option<bool>,
+    ) -> Result<f64, SyscoinError> {
         let mut params = Vec::new();
         if let Some(acct) = account {
             params.push(json!(acct));
@@ -266,6 +280,40 @@ fn parse_amount_value(value: &Value) -> Result<f64, SyscoinError> {
 }
 
 impl SyscoinClient {
+    fn normalized_blob_id<'a>(&self, blob_id: &'a str) -> &'a str {
+        blob_id.strip_prefix("0x").unwrap_or(blob_id)
+    }
+
+    fn poda_candidate_urls(&self, version_hash: &str) -> Vec<String> {
+        let normalized_hash = self.normalized_blob_id(version_hash);
+        let base = self.poda_url.trim_end_matches('/');
+
+        if base.ends_with("/blob") || base.ends_with("/vh") {
+            return vec![format!("{base}/{normalized_hash}")];
+        }
+
+        vec![
+            format!("{base}/blob/{normalized_hash}"),
+            format!("{base}/vh/{normalized_hash}"),
+        ]
+    }
+
+    async fn blob_exists_in_cloud(&self, version_hash: &str) -> bool {
+        for url in self.poda_candidate_urls(version_hash) {
+            match self.rpc_client.http_get(&url).await {
+                Ok(_) => {
+                    info!("PODA fallback located blob at {}", url);
+                    return true;
+                }
+                Err(err) => {
+                    warn!("PODA fallback lookup failed at {}: {}", url, err);
+                }
+            }
+        }
+
+        false
+    }
+
     /// Create a new Syscoin client
     pub fn new(
         rpc_url: &str,
@@ -276,7 +324,8 @@ impl SyscoinClient {
         wallet_name: &str,
     ) -> Result<Self, SyscoinError> {
         info!("Initializing Client");
-        let rpc_client = RealRpcClient::new_with_timeout(rpc_url, rpc_user, rpc_password, timeout, wallet_name)?;
+        let rpc_client =
+            RealRpcClient::new_with_timeout(rpc_url, rpc_user, rpc_password, timeout, wallet_name)?;
 
         Ok(Self {
             rpc_client,
@@ -291,16 +340,21 @@ impl SyscoinClient {
                 "blob size ({}) exceeds maximum allowed ({})",
                 data.len(),
                 MAX_BLOB_SIZE
-            ).into());
+            )
+            .into());
         }
 
         let data_hex = hex::encode(data);
         // pass positional args: data hex, overwrite_existing, hash type.
         // Keep overwrite_existing=false to make repeated calls idempotent for identical data.
         // Force blake2s to keep blob IDs aligned with Syscoin / OS expectations.
-        let params = vec![json!(data_hex), json!(false), json!("blake2s")];
-
-        let response = self.rpc_client.call_wallet("syscoincreatenevmblob", &params).await?;
+       // let params = vec![json!(data_hex), json!(false), json!("blake2s")];
+        let params = vec![json!(data_hex), json!(false), json!("keccak")];
+        // SYSCOIN
+        let response = self
+            .rpc_client
+            .call_wallet("syscoincreatenevmblob", &params)
+            .await?;
         let hash = response
             .get("versionhash")
             .and_then(|v| v.as_str())
@@ -308,10 +362,12 @@ impl SyscoinClient {
         Ok(hash.to_string())
     }
 
-
     /// Ensure there is a receive address for the provided label.
     /// If none exists, a new address is created and returned.
-    pub async fn ensure_address_by_label(&self, address_label: &str) -> Result<String, SyscoinError> {
+    pub async fn ensure_address_by_label(
+        &self,
+        address_label: &str,
+    ) -> Result<String, SyscoinError> {
         match self.fetch_address_by_label(address_label).await? {
             Some(existing) => Ok(existing),
             None => self.get_new_address(address_label).await,
@@ -320,15 +376,23 @@ impl SyscoinClient {
 
     /// Ensure the wallet is created/loaded and return a labeled funding address.
     /// This is idempotent and safe to call on startup.
-    pub async fn ensure_wallet_and_address(&self, wallet_name: &str, address_label: &str) -> Result<String, SyscoinError> {
+    pub async fn ensure_wallet_and_address(
+        &self,
+        wallet_name: &str,
+        address_label: &str,
+    ) -> Result<String, SyscoinError> {
         self.create_or_load_wallet(wallet_name).await?;
         self.ensure_address_by_label(address_label).await
     }
 
     /// Ensure the internally-configured wallet is loaded and return a labeled address
-    pub async fn ensure_own_wallet_and_address(&self, address_label: &str) -> Result<String, SyscoinError> {
+    pub async fn ensure_own_wallet_and_address(
+        &self,
+        address_label: &str,
+    ) -> Result<String, SyscoinError> {
         let wallet_name = self.rpc_client.wallet_name();
-        self.ensure_wallet_and_address(wallet_name, address_label).await
+        self.ensure_wallet_and_address(wallet_name, address_label)
+            .await
     }
 
     /// Get wallet balance
@@ -341,7 +405,10 @@ impl SyscoinClient {
     pub async fn get_blob_base_fee(&self, conf_target: u16) -> Result<u128, SyscoinError> {
         let estimate = self
             .rpc_client
-            .call("estimatesmartfee", &[json!(conf_target), json!("economical")])
+            .call(
+                "estimatesmartfee",
+                &[json!(conf_target), json!("economical")],
+            )
             .await?;
         let estimate_fee_per_kvb = estimate
             .get("feerate")
@@ -395,7 +462,6 @@ impl SyscoinClient {
             .ok_or_else(|| "getnewaddress returned non-string".into())
     }
 
-
     /// Fetch an existing address by label, if any
     pub async fn fetch_address_by_label(
         &self,
@@ -428,8 +494,6 @@ impl SyscoinClient {
         Ok(None)
     }
 
-
-
     /// Retrieve blob data from RPC node
     /// Retrieve blob data from RPC node
     async fn get_blob_from_rpc(&self, blob_id: &str) -> Result<Vec<u8>, SyscoinError> {
@@ -437,22 +501,16 @@ impl SyscoinClient {
         let actual_blob_id = blob_id.strip_prefix("0x").unwrap_or(blob_id);
 
         // Use positional parameters: (versionhash_or_txid: String, getdata: bool)
-        let params = vec![
-            json!(actual_blob_id),
-            json!(true),
-        ];
+        let params = vec![json!(actual_blob_id), json!(true)];
 
         // 1) Call RPC
         let response = self.rpc_client.call("getnevmblobdata", &params).await?;
 
-
-        
         let hex_data = response
             .get("data")
             .and_then(|v| v.as_str())
             .ok_or("Missing data in getnevmblobdata response")?;
 
- 
         if let Some(txid) = response.get("txid").and_then(|v| v.as_str()) {
             let tx_link = format!("https://explorer-blockbook.syscoin.org/tx/{}", txid);
             info!("🔗 View this transaction on Syscoin Explorer: {}", tx_link);
@@ -465,12 +523,18 @@ impl SyscoinClient {
         Ok(hex::decode(data_to_decode)?)
     }
 
-
-
     /// Retrieve blob data from PODA cloud storage
     pub async fn get_blob_from_cloud(&self, version_hash: &str) -> Result<Vec<u8>, SyscoinError> {
-        let url = format!("{}/blob/{}", self.poda_url, version_hash);
-        self.rpc_client.http_get(&url).await
+        let mut last_err: Option<SyscoinError> = None;
+
+        for url in self.poda_candidate_urls(version_hash) {
+            match self.rpc_client.http_get(&url).await {
+                Ok(bytes) => return Ok(bytes),
+                Err(err) => last_err = Some(err),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| "failed to build PODA URL".into()))
     }
 
     /// Check if a blob is final
@@ -497,6 +561,13 @@ impl SyscoinClient {
                 if msg.contains("Could not find blob information for versionhash")
                     || msg.contains("\"code\":-32602")
                 {
+                    if self.blob_exists_in_cloud(actual_blob_id).await {
+                        warn!(
+                            "RPC finality lookup could not find blob {}; accepting PODA archive presence as finalized",
+                            actual_blob_id
+                        );
+                        return Ok(true);
+                    }
                     return Ok(false);
                 }
                 return Err(e);
@@ -521,7 +592,8 @@ impl SyscoinClient {
         match mode {
             BitcoinDaFinalityMode::Chainlock => self.check_blob_finality(blob_id).await,
             BitcoinDaFinalityMode::Confirmations => {
-                self.check_blob_finality_by_confirmations(blob_id, confirmations).await
+                self.check_blob_finality_by_confirmations(blob_id, confirmations)
+                    .await
             }
         }
     }
@@ -542,6 +614,13 @@ impl SyscoinClient {
                 if msg.contains("Could not find blob information for versionhash")
                     || msg.contains("\"code\":-32602")
                 {
+                    if self.blob_exists_in_cloud(actual_blob_id).await {
+                        warn!(
+                            "RPC confirmation lookup could not find blob {}; accepting PODA archive presence as finalized",
+                            actual_blob_id
+                        );
+                        return Ok(true);
+                    }
                     return Ok(false);
                 }
                 return Err(e);
@@ -603,7 +682,11 @@ impl RpcClient for MockRpcClient {
         }
     }
 
-    async fn get_balance(&self, _account: Option<&str>, _include_watchonly: Option<bool>) -> Result<f64, SyscoinError> {
+    async fn get_balance(
+        &self,
+        _account: Option<&str>,
+        _include_watchonly: Option<bool>,
+    ) -> Result<f64, SyscoinError> {
         Ok(10.5)
     }
 

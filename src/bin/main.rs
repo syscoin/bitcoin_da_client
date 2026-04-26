@@ -1,9 +1,9 @@
+use bitcoin_da_client::SyscoinClient;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, debug, span, Level};
-use tracing::{Instrument};
+use tracing::Instrument;
+use tracing::{debug, info, span, Level};
 use tracing_subscriber::fmt;
-use bitcoin_da_client::SyscoinClient;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -21,38 +21,42 @@ async fn main() -> Result<(), Error> {
     info!("🚀 Starting Syscoin client application");
 
     // 🔧 Configuration parameters
-    let rpc_url    = "http://127.0.0.1:8370";
-    let rpc_user   = "u";
+    let rpc_url = "http://127.0.0.1:8370";
+    let rpc_user = "u";
     let rpc_password = "p";
-    let poda_url   = "https://poda.syscoin.org/vh/";
-    let timeout    = Some(Duration::from_secs(30));
-    let wallet     = "wallet200999";
+    let poda_url = "https://poda.syscoin.org/vh/";
+    let timeout = Some(Duration::from_secs(30));
+    let wallet = "wallet200999";
     debug!(rpc_url, rpc_user, poda_url, timeout = ?timeout, wallet, "🔍 Config loaded");
 
     // 🔌 Initialize the Syscoin RPC client
     info!("🔌 Connecting to Syscoin node…");
-    let client = SyscoinClient::new(
-        rpc_url,
-        rpc_user,
-        rpc_password,
-        poda_url,
-        timeout,
-        wallet,
-    )?;
+    let client = SyscoinClient::new(rpc_url, rpc_user, rpc_password, poda_url, timeout, wallet)?;
     info!("✅ SyscoinClient initialized successfully");
 
     // 💼 Create or load the wallet and ensure a stable funding address
     info!("🆕 Loading or creating wallet “{}”", wallet);
     client
         .create_or_load_wallet(wallet)
-        .instrument(span!(Level::DEBUG, "create_or_load_wallet", wallet = wallet))
+        .instrument(span!(
+            Level::DEBUG,
+            "create_or_load_wallet",
+            wallet = wallet
+        ))
         .await?;
     let funding_label = "da_funding";
     let funding_address = client
         .ensure_address_by_label(funding_label)
-        .instrument(span!(Level::DEBUG, "ensure_address_by_label", label = funding_label))
+        .instrument(span!(
+            Level::DEBUG,
+            "ensure_address_by_label",
+            label = funding_label
+        ))
         .await?;
-    info!("🏷️ Funding label '{}' is bound to address: {}", funding_label, funding_address);
+    info!(
+        "🏷️ Funding label '{}' is bound to address: {}",
+        funding_label, funding_address
+    );
 
     // 📥 Fetch the current balance
     let mut balance = client
@@ -66,7 +70,11 @@ async fn main() -> Result<(), Error> {
         info!("⚠️ Balance empty, let's top you up!");
         let address = match client
             .fetch_address_by_label("podalabel")
-            .instrument(span!(Level::DEBUG, "fetch_address_by_label", label = "podalabel"))
+            .instrument(span!(
+                Level::DEBUG,
+                "fetch_address_by_label",
+                label = "podalabel"
+            ))
             .await?
         {
             Some(addr) => {
@@ -126,7 +134,6 @@ async fn main() -> Result<(), Error> {
     // 🔗 Log the data availability (DA) link
     let da_link = format!("{}{}", poda_url, blob_hash);
     info!("🔗 Access your data here: {}", da_link);
-
 
     info!("🏁 Syscoin client flow complete—have a great day!");
     Ok(())
