@@ -549,6 +549,7 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
+        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -758,6 +759,7 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
+        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]

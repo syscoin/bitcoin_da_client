@@ -348,7 +348,7 @@ impl SyscoinClient {
         // pass positional args: data hex, overwrite_existing, hash type.
         // Keep overwrite_existing=false to make repeated calls idempotent for identical data.
         // Force blake2s to keep blob IDs aligned with Syscoin / OS expectations.
-       // let params = vec![json!(data_hex), json!(false), json!("blake2s")];
+        // let params = vec![json!(data_hex), json!(false), json!("blake2s")];
         let params = vec![json!(data_hex), json!(false), json!("keccak")];
         // SYSCOIN
         let response = self
@@ -537,6 +537,28 @@ impl SyscoinClient {
         Err(last_err.unwrap_or_else(|| "failed to build PODA URL".into()))
     }
 
+    /// Check whether a blob is retrievable from the Syscoin node or PODA cloud storage.
+    ///
+    /// This is an availability check only. It deliberately does not imply chainlock or
+    /// confirmation finality.
+    pub async fn blob_exists(&self, blob_id: &str) -> Result<bool, SyscoinError> {
+        let actual_blob_id = blob_id.strip_prefix("0x").unwrap_or(blob_id);
+        let params = vec![json!(actual_blob_id)];
+
+        match self.rpc_client.call("getnevmblobdata", &params).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("Could not find blob information for versionhash")
+                    || msg.contains("\"code\":-32602")
+                {
+                    return Ok(self.blob_exists_in_cloud(actual_blob_id).await);
+                }
+                Err(e)
+            }
+        }
+    }
+
     /// Check if a blob is final
     pub async fn check_blob_finality(&self, blob_id: &str) -> Result<bool, SyscoinError> {
         // Strip any 0x prefix
@@ -692,5 +714,29 @@ impl RpcClient for MockRpcClient {
 
     async fn http_get(&self, _url: &str) -> Result<Vec<u8>, SyscoinError> {
         Ok(b"mock_data".to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn blob_exists_does_not_imply_finality() {
+        let mut server = Server::new_async().await;
+        let _lookup = server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"data":"00","chainlock":false}}"#)
+            .expect(2)
+            .create_async()
+            .await;
+        let client = SyscoinClient::new(&server.url(), "user", "password", &server.url(), None, "")
+            .expect("client should initialize");
+
+        assert!(client.blob_exists("abc").await.unwrap());
+        assert!(!client.check_blob_finality("abc").await.unwrap());
     }
 }
