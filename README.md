@@ -155,11 +155,11 @@ Contributions are welcome! Please open an issue or submit a pull request for any
 
 ## Contact
 
-For any inquiries or feedback, please reach out to the maintainer at [abdul@syscoin.org](mailto:abdul@syscoin.org).
+For any inquiries or feedback, please reach out to the maintainer at [sidhujag@syscoin.org](mailto:sidhujag@syscoin.org).
 
 ## Support
 
-If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/SYS-Labs/bitcoin_da_client) or contact the maintainer directly.
+If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/syscoin/bitcoin_da_client) or contact the maintainer directly.
 
 ---
 
