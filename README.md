@@ -159,7 +159,7 @@ For any inquiries or feedback, please reach out to the maintainer at [abdul@sysc
 
 ## Support
 
-If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/SYS-Labs/bitcoin_da_client) or contact the maintainer directly.
+If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/syscoin/bitcoin_da_client) or contact the maintainer directly.
 
 ---
 

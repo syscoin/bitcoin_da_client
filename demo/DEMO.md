@@ -174,4 +174,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Contact
 
 Maintainer: Abdul ([abdul@syscoin.org](mailto:abdul@syscoin.org))
-GitHub: [https://github.com/SYS-Labs/bitcoin\_da\_client](https://github.com/SYS-Labs/bitcoin_da_client)
+GitHub: [https://github.com/syscoin/bitcoin\_da\_client](https://github.com/syscoin/bitcoin_da_client)
