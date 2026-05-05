@@ -155,7 +155,7 @@ Contributions are welcome! Please open an issue or submit a pull request for any
 
 ## Contact
 
-For any inquiries or feedback, please reach out to the maintainer at [abdul@syscoin.org](mailto:abdul@syscoin.org).
+For any inquiries or feedback, please reach out to the maintainer at [sidhujag@syscoin.org](mailto:sidhujag@syscoin.org).
 
 ## Support
 
