@@ -77,6 +77,10 @@ mod tests {
 
         let _m = mock_server
             .mock("POST", "/wallet/test_wallet")
+            .match_body(mockito::Matcher::JsonString(
+                r#"{"jsonrpc":"2.0","id":1,"method":"syscoincreatenevmblob","params":["01020304",false,"blake2s"]}"#
+                    .to_string(),
+            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(mock_response.to_string())
