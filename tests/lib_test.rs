@@ -114,7 +114,7 @@ mod tests {
 
         // Mock HTTP GET response
         let _m = mock_server
-            .mock("GET", format!("/blob/{}", version_hash).as_str())
+            .mock("GET", format!("/vh/{}", version_hash).as_str())
             .with_status(200)
             .with_body(&expected_data)
             .create();
@@ -145,18 +145,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_blob_from_cloud_falls_back_to_vh() {
+    async fn test_get_blob_from_cloud_uses_vh() {
         let mut mock_server = std::thread::spawn(|| Server::new())
             .join()
             .expect("Failed to create mock server");
 
         let expected_data = Vec::new();
         let version_hash = "deadbeef";
-
-        mock_server
-            .mock("GET", format!("/blob/{}", version_hash).as_str())
-            .with_status(404)
-            .create();
 
         mock_server
             .mock("GET", format!("/vh/{}", version_hash).as_str())
@@ -177,6 +172,89 @@ mod tests {
         let result = client.get_blob_from_cloud(version_hash).await;
         assert!(result.is_ok(), "Error: {:?}", result.err());
         assert_eq!(result.unwrap(), expected_data);
+    }
+
+    #[tokio::test]
+    async fn test_blob_exists_uses_metadata_only_rpc() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        let blob_id = "deadbeef";
+        let mock_response = json!({
+            "result": {
+                "versionhash": blob_id
+            },
+            "error": null,
+            "id": 1
+        });
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::JsonString(
+                r#"{"jsonrpc":"2.0","id":1,"method":"getnevmblobdata","params":["deadbeef",false]}"#
+                    .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        assert!(client.blob_exists("0xdeadbeef").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_blob_exists_cloud_fallback_uses_check_vh() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        let blob_id = "deadbeef";
+        let not_found_response = json!({
+            "result": null,
+            "error": {
+                "code": -32602,
+                "message": format!("Could not find blob information for versionhash {}", blob_id)
+            },
+            "id": 1
+        });
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(not_found_response.to_string())
+            .create();
+
+        mock_server
+            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
+            .with_status(200)
+            .with_body(json!({ "exists": true }).to_string())
+            .create();
+
+        let poda_url = format!("{}/vh", mock_server.url());
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &poda_url,
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -527,14 +605,9 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/blob/{}", blob_id).as_str())
-            .with_status(404)
-            .create();
-
-        mock_server
-            .mock("GET", format!("/vh/{}", blob_id).as_str())
+            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
             .with_status(200)
-            .with_body("")
+            .with_body("true")
             .create();
 
         let client = SyscoinClient::new(
@@ -735,14 +808,9 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/blob/{}", blob_id).as_str())
-            .with_status(404)
-            .create();
-
-        mock_server
-            .mock("GET", format!("/vh/{}", blob_id).as_str())
+            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
             .with_status(200)
-            .with_body("")
+            .with_body("true")
             .create();
 
         let client = SyscoinClient::new(

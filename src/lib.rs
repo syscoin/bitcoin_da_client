@@ -284,34 +284,91 @@ impl SyscoinClient {
         blob_id.strip_prefix("0x").unwrap_or(blob_id)
     }
 
-    fn poda_candidate_urls(&self, version_hash: &str) -> Vec<String> {
+    fn poda_blob_url(&self, version_hash: &str) -> String {
         let normalized_hash = self.normalized_blob_id(version_hash);
         let base = self.poda_url.trim_end_matches('/');
 
-        if base.ends_with("/blob") || base.ends_with("/vh") {
-            return vec![format!("{base}/{normalized_hash}")];
+        if base.ends_with("/vh") {
+            return format!("{base}/{normalized_hash}");
         }
 
-        vec![
-            format!("{base}/blob/{normalized_hash}"),
-            format!("{base}/vh/{normalized_hash}"),
-        ]
+        format!("{base}/vh/{normalized_hash}")
     }
 
-    async fn blob_exists_in_cloud(&self, version_hash: &str) -> bool {
-        for url in self.poda_candidate_urls(version_hash) {
-            match self.rpc_client.http_get(&url).await {
-                Ok(_) => {
-                    info!("PODA fallback located blob at {}", url);
-                    return true;
-                }
-                Err(err) => {
-                    warn!("PODA fallback lookup failed at {}: {}", url, err);
-                }
+    fn poda_check_vh_url(&self, version_hash: &str) -> String {
+        let normalized_hash = self.normalized_blob_id(version_hash);
+        let mut base = self.poda_url.trim_end_matches('/');
+
+        for suffix in ["/vh", "/check_vh"] {
+            if let Some(stripped) = base.strip_suffix(suffix) {
+                base = stripped;
+                break;
             }
         }
 
-        false
+        format!("{base}/check_vh/{normalized_hash}")
+    }
+
+    fn check_vh_response_exists(bytes: &[u8]) -> bool {
+        let response = String::from_utf8_lossy(bytes);
+        let trimmed = response.trim();
+
+        if trimmed.is_empty() {
+            return true;
+        }
+
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return match value {
+                Value::Bool(exists) => exists,
+                Value::Number(number) => number.as_u64().is_some_and(|value| value != 0),
+                Value::String(value) => Self::truthy_check_vh_response(&value),
+                Value::Object(object) => {
+                    if object.get("error").is_some_and(|error| !error.is_null()) {
+                        return false;
+                    }
+
+                    ["exists", "found", "available", "result"]
+                        .into_iter()
+                        .find_map(|key| object.get(key))
+                        .map_or(true, |value| match value {
+                            Value::Bool(exists) => *exists,
+                            Value::Number(number) => {
+                                number.as_u64().is_some_and(|value| value != 0)
+                            }
+                            Value::String(value) => Self::truthy_check_vh_response(value),
+                            _ => true,
+                        })
+                }
+                _ => true,
+            };
+        }
+
+        Self::truthy_check_vh_response(trimmed)
+    }
+
+    fn truthy_check_vh_response(response: &str) -> bool {
+        !matches!(
+            response.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "missing" | "not_found" | "not found" | "notfound"
+        )
+    }
+
+    async fn blob_exists_in_cloud(&self, version_hash: &str) -> bool {
+        let url = self.poda_check_vh_url(version_hash);
+
+        match self.rpc_client.http_get(&url).await {
+            Ok(bytes) => {
+                let exists = Self::check_vh_response_exists(&bytes);
+                if exists {
+                    info!("PODA fallback located blob with check_vh at {}", url);
+                }
+                exists
+            }
+            Err(err) => {
+                warn!("PODA fallback check_vh lookup failed at {}: {}", url, err);
+                false
+            }
+        }
     }
 
     /// Create a new Syscoin client
@@ -524,16 +581,9 @@ impl SyscoinClient {
 
     /// Retrieve blob data from PODA cloud storage
     pub async fn get_blob_from_cloud(&self, version_hash: &str) -> Result<Vec<u8>, SyscoinError> {
-        let mut last_err: Option<SyscoinError> = None;
-
-        for url in self.poda_candidate_urls(version_hash) {
-            match self.rpc_client.http_get(&url).await {
-                Ok(bytes) => return Ok(bytes),
-                Err(err) => last_err = Some(err),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| "failed to build PODA URL".into()))
+        self.rpc_client
+            .http_get(&self.poda_blob_url(version_hash))
+            .await
     }
 
     /// Check whether a blob is retrievable from the Syscoin node or PODA cloud storage.
@@ -542,7 +592,7 @@ impl SyscoinClient {
     /// confirmation finality.
     pub async fn blob_exists(&self, blob_id: &str) -> Result<bool, SyscoinError> {
         let actual_blob_id = blob_id.strip_prefix("0x").unwrap_or(blob_id);
-        let params = vec![json!(actual_blob_id)];
+        let params = vec![json!(actual_blob_id), json!(false)];
 
         match self.rpc_client.call("getnevmblobdata", &params).await {
             Ok(_) => Ok(true),
