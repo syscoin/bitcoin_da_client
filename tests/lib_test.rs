@@ -181,18 +181,21 @@ mod tests {
             .expect("Failed to create mock server");
 
         let blob_id = "deadbeef";
-        let mock_response = json!({
-            "result": {
-                "versionhash": blob_id
-            },
-            "error": null,
-            "id": 1
-        });
+        let mock_response = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {
+                    "versionhash": blob_id
+                },
+                "error": null
+            }
+        ]);
 
         mock_server
             .mock("POST", "/")
             .match_body(mockito::Matcher::JsonString(
-                r#"{"jsonrpc":"2.0","id":1,"method":"getnevmblobdata","params":["deadbeef",false]}"#
+                r#"[{"jsonrpc":"2.0","id":0,"method":"getnevmblobdata","params":["deadbeef",false]}]"#
                     .to_string(),
             ))
             .with_status(200)
@@ -220,14 +223,17 @@ mod tests {
             .expect("Failed to create mock server");
 
         let blob_id = "deadbeef";
-        let not_found_response = json!({
-            "result": null,
-            "error": {
-                "code": -32602,
-                "message": format!("Could not find blob information for versionhash {}", blob_id)
-            },
-            "id": 1
-        });
+        let not_found_response = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": null,
+                "error": {
+                    "code": -32602,
+                    "message": format!("Could not find blob information for versionhash {}", blob_id)
+                }
+            }
+        ]);
 
         mock_server
             .mock("POST", "/")
@@ -238,9 +244,11 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
             .with_status(200)
-            .with_body(json!({ "exists": true }).to_string())
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
             .create();
 
         let poda_url = format!("{}/vh", mock_server.url());
@@ -255,6 +263,82 @@ mod tests {
         .unwrap();
 
         assert!(client.blob_exists(blob_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_batches_rpc_and_check_vh_fallback() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": {
+                            "versionhash": "aaa"
+                        },
+                        "error": null
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash bbb"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["bbb"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["0xaaa", "bbb"]).await.unwrap();
+        assert_eq!(result, vec![true, true]);
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_rejects_more_than_32_hashes() {
+        let client = SyscoinClient::new(
+            "http://localhost:8888",
+            "user",
+            "password",
+            "http://poda.example.com",
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let hashes: Vec<_> = (0..33).map(|idx| format!("{idx:064x}")).collect();
+        let result = client.blobs_exist(hashes.iter()).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -605,9 +689,11 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
             .with_status(200)
-            .with_body("true")
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
             .create();
 
         let client = SyscoinClient::new(
@@ -626,7 +712,6 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
-        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -808,9 +893,11 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/check_vh/{}", blob_id).as_str())
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
             .with_status(200)
-            .with_body("true")
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
             .create();
 
         let client = SyscoinClient::new(
@@ -831,7 +918,6 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
-        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
