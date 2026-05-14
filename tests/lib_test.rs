@@ -325,6 +325,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_blobs_exist_accepts_aggregate_check_vh_response() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash aaa"
+                        }
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash bbb"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["aaa","bbb"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!(false).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["aaa", "bbb"]).await.unwrap();
+        assert_eq!(result, vec![false, false]);
+    }
+
+    #[tokio::test]
     async fn test_blobs_exist_rejects_more_than_32_hashes() {
         let client = SyscoinClient::new(
             "http://localhost:8888",

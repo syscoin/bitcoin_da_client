@@ -422,6 +422,8 @@ impl SyscoinClient {
         version_hashes: &[String],
     ) -> Result<Vec<bool>, SyscoinError> {
         let value: Value = serde_json::from_slice(bytes)?;
+        let aggregate_result =
+            |value: &Value| vec![Self::check_vh_value_exists(value); version_hashes.len()];
 
         match value {
             Value::Array(values) => {
@@ -437,16 +439,25 @@ impl SyscoinClient {
             }
             Value::Object(object) => {
                 for key in ["results", "result"] {
-                    if let Some(Value::Array(values)) = object.get(key) {
-                        if values.len() != version_hashes.len() {
-                            return Err(format!(
-                                "check_vh batch response length mismatch: expected {}, got {}",
-                                version_hashes.len(),
-                                values.len()
-                            )
-                            .into());
+                    if let Some(value) = object.get(key) {
+                        if let Value::Array(values) = value {
+                            if values.len() != version_hashes.len() {
+                                return Err(format!(
+                                    "check_vh batch response length mismatch: expected {}, got {}",
+                                    version_hashes.len(),
+                                    values.len()
+                                )
+                                .into());
+                            }
+                            return Ok(values.iter().map(Self::check_vh_value_exists).collect());
                         }
-                        return Ok(values.iter().map(Self::check_vh_value_exists).collect());
+                        return Ok(aggregate_result(value));
+                    }
+                }
+
+                for key in ["exists", "found", "available"] {
+                    if let Some(value) = object.get(key) {
+                        return Ok(aggregate_result(value));
                     }
                 }
 
@@ -463,7 +474,7 @@ impl SyscoinClient {
                     })
                     .collect()
             }
-            _ => Err("check_vh batch response must be an array or object".into()),
+            other => Ok(aggregate_result(&other)),
         }
     }
 
