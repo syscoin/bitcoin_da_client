@@ -114,7 +114,7 @@ mod tests {
 
         // Mock HTTP GET response
         let _m = mock_server
-            .mock("GET", format!("/blob/{}", version_hash).as_str())
+            .mock("GET", format!("/vh/{}", version_hash).as_str())
             .with_status(200)
             .with_body(&expected_data)
             .create();
@@ -145,18 +145,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_blob_from_cloud_falls_back_to_vh() {
+    async fn test_get_blob_from_cloud_uses_vh() {
         let mut mock_server = std::thread::spawn(|| Server::new())
             .join()
             .expect("Failed to create mock server");
 
         let expected_data = Vec::new();
         let version_hash = "deadbeef";
-
-        mock_server
-            .mock("GET", format!("/blob/{}", version_hash).as_str())
-            .with_status(404)
-            .create();
 
         mock_server
             .mock("GET", format!("/vh/{}", version_hash).as_str())
@@ -177,6 +172,335 @@ mod tests {
         let result = client.get_blob_from_cloud(version_hash).await;
         assert!(result.is_ok(), "Error: {:?}", result.err());
         assert_eq!(result.unwrap(), expected_data);
+    }
+
+    #[tokio::test]
+    async fn test_blob_exists_uses_metadata_only_rpc() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        let blob_id = "deadbeef";
+        let mock_response = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {
+                    "versionhash": blob_id
+                },
+                "error": null
+            }
+        ]);
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::JsonString(
+                r#"[{"jsonrpc":"2.0","id":0,"method":"getnevmblobdata","params":["deadbeef",false]}]"#
+                    .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        assert!(client.blob_exists("0xdeadbeef").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_blob_exists_cloud_fallback_uses_check_vh() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        let blob_id = "deadbeef";
+        let not_found_response = json!([
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": null,
+                "error": {
+                    "code": -32602,
+                    "message": format!("Could not find blob information for versionhash {}", blob_id)
+                }
+            }
+        ]);
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(not_found_response.to_string())
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
+            .create();
+
+        let poda_url = format!("{}/vh", mock_server.url());
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &poda_url,
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        assert!(client.blob_exists(blob_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_batches_rpc_and_check_vh_fallback() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": {
+                            "versionhash": "aaa"
+                        },
+                        "error": null
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash bbb"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["bbb"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["0xaaa", "bbb"]).await.unwrap();
+        assert_eq!(result, vec![true, true]);
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_accepts_aggregate_check_vh_response() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash aaa"
+                        }
+                    },
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash bbb"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["aaa","bbb"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!(false).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["aaa", "bbb"]).await.unwrap();
+        assert_eq!(result, vec![false, false]);
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_treats_unknown_check_vh_response_as_unavailable() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash aaa"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["aaa"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "unexpected": true }).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["aaa"]).await.unwrap();
+        assert_eq!(result, vec![false]);
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_treats_descriptive_check_vh_string_as_unavailable() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash aaa"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["aaa"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!("blob not found").to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["aaa"]).await.unwrap();
+        assert_eq!(result, vec![false]);
+    }
+
+    #[tokio::test]
+    async fn test_blobs_exist_rejects_more_than_32_hashes() {
+        let client = SyscoinClient::new(
+            "http://localhost:8888",
+            "user",
+            "password",
+            "http://poda.example.com",
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let hashes: Vec<_> = (0..33).map(|idx| format!("{idx:064x}")).collect();
+        let result = client.blobs_exist(hashes.iter()).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -527,14 +851,11 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/blob/{}", blob_id).as_str())
-            .with_status(404)
-            .create();
-
-        mock_server
-            .mock("GET", format!("/vh/{}", blob_id).as_str())
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
             .with_status(200)
-            .with_body("")
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
             .create();
 
         let client = SyscoinClient::new(
@@ -553,7 +874,6 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
-        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -735,14 +1055,11 @@ mod tests {
             .create();
 
         mock_server
-            .mock("GET", format!("/blob/{}", blob_id).as_str())
-            .with_status(404)
-            .create();
-
-        mock_server
-            .mock("GET", format!("/vh/{}", blob_id).as_str())
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(format!(r#"["{blob_id}"]"#)))
             .with_status(200)
-            .with_body("")
+            .with_header("content-type", "application/json")
+            .with_body(json!([true]).to_string())
             .create();
 
         let client = SyscoinClient::new(
@@ -763,7 +1080,6 @@ mod tests {
             result.unwrap(),
             "Expected PODA fallback to mark blob as final"
         );
-        assert!(client.blob_exists(blob_id).await.unwrap());
     }
 
     #[tokio::test]
