@@ -385,6 +385,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_blobs_exist_treats_unknown_check_vh_response_as_unavailable() {
+        let mut mock_server = std::thread::spawn(|| Server::new())
+            .join()
+            .expect("Failed to create mock server");
+
+        mock_server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Regex("getnevmblobdata".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 0,
+                        "result": null,
+                        "error": {
+                            "code": -32602,
+                            "message": "Could not find blob information for versionhash aaa"
+                        }
+                    }
+                ])
+                .to_string(),
+            )
+            .expect(1)
+            .create();
+
+        mock_server
+            .mock("POST", "/check_vh")
+            .match_body(mockito::Matcher::JsonString(r#"["aaa"]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "unexpected": true }).to_string())
+            .expect(1)
+            .create();
+
+        let client = SyscoinClient::new(
+            &mock_server.url(),
+            "user",
+            "password",
+            &mock_server.url(),
+            None,
+            "test_wallet",
+        )
+        .unwrap();
+
+        let result = client.blobs_exist(["aaa"]).await.unwrap();
+        assert_eq!(result, vec![false]);
+    }
+
+    #[tokio::test]
     async fn test_blobs_exist_rejects_more_than_32_hashes() {
         let client = SyscoinClient::new(
             "http://localhost:8888",

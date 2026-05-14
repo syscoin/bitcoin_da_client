@@ -411,9 +411,9 @@ impl SyscoinClient {
                 ["exists", "found", "available", "result"]
                     .into_iter()
                     .find_map(|key| object.get(key))
-                    .map_or(true, Self::check_vh_value_exists)
+                    .is_some_and(Self::check_vh_value_exists)
             }
-            _ => true,
+            _ => false,
         }
     }
 
@@ -464,13 +464,9 @@ impl SyscoinClient {
                 version_hashes
                     .iter()
                     .map(|version_hash| {
-                        object
+                        Ok(object
                             .get(version_hash)
-                            .map(Self::check_vh_value_exists)
-                            .ok_or_else(|| {
-                                format!("missing check_vh result for version hash {version_hash}")
-                                    .into()
-                            })
+                            .is_some_and(Self::check_vh_value_exists))
                     })
                     .collect()
             }
