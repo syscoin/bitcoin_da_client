@@ -392,10 +392,7 @@ impl SyscoinClient {
     }
 
     fn truthy_check_vh_response(response: &str) -> bool {
-        !matches!(
-            response.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "missing" | "not_found" | "not found" | "notfound"
-        )
+        matches!(response.trim().to_ascii_lowercase().as_str(), "1" | "true")
     }
 
     fn check_vh_value_exists(value: &Value) -> bool {
