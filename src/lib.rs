@@ -303,7 +303,7 @@ impl RealRpcClient {
     pub async fn create_or_load_wallet(&self, wallet_name: &str) -> Result<(), SyscoinError> {
         info!("create_or_load_wallet");
         match self.call("loadwallet", &[json!(wallet_name)]).await {
-            Ok(_) => return Ok(()),
+            Ok(_) => Ok(()),
             Err(e) => {
                 info!("wallet error");
                 let s = e.to_string();
@@ -312,15 +312,15 @@ impl RealRpcClient {
                 if s.contains("failed") {
                     info!("wallet not found, creating new one");
                     self.call("createwallet", &[json!(wallet_name)]).await?;
-                    return Ok(());
-                }
-                // -4 = wallet already loaded → ignore
-                if s.contains("already loaded") {
+                    Ok(())
+                } else if s.contains("already loaded") {
+                    // -4 = wallet already loaded → ignore
                     info!("wallet already loaded, continuing");
-                    return Ok(());
+                    Ok(())
+                } else {
+                    // any other error is fatal
+                    Err(e)
                 }
-                // any other error is fatal
-                return Err(e);
             }
         }
     }
@@ -852,10 +852,7 @@ impl SyscoinClient {
 
     /// Check if a blob is final
     pub async fn check_blob_finality(&self, blob_id: &str) -> Result<bool, SyscoinError> {
-        Ok(self
-            .blob_finality_state(blob_id)
-            .await?
-            .is_final())
+        Ok(self.blob_finality_state(blob_id).await?.is_final())
     }
 
     pub async fn blob_finality_state(
