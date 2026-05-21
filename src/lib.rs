@@ -553,8 +553,8 @@ impl SyscoinClient {
 
         let data_hex = hex::encode(data);
         // pass positional args: data hex, overwrite_existing, hash type.
-        // Force blake2s to keep blob IDs aligned with Syscoin / OS expectations.
-        let params = vec![json!(data_hex), json!(overwrite_existing), json!("blake2s")];
+        // Force keccak to keep blob IDs aligned with Syscoin / OS expectations.
+        let params = vec![json!(data_hex), json!(overwrite_existing), json!("keccak")];
         // SYSCOIN
         let response = self
             .rpc_client

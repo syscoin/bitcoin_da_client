@@ -78,7 +78,7 @@ mod tests {
         let _m = mock_server
             .mock("POST", "/wallet/test_wallet")
             .match_body(mockito::Matcher::JsonString(
-                r#"{"jsonrpc":"2.0","id":1,"method":"syscoincreatenevmblob","params":["01020304",false,"blake2s"]}"#
+                r#"{"jsonrpc":"2.0","id":1,"method":"syscoincreatenevmblob","params":["01020304",false,"keccak"]}"#
                     .to_string(),
             ))
             .with_status(200)
@@ -120,7 +120,7 @@ mod tests {
         let _m = mock_server
             .mock("POST", "/wallet/test_wallet")
             .match_body(mockito::Matcher::JsonString(
-                r#"{"jsonrpc":"2.0","id":1,"method":"syscoincreatenevmblob","params":["01020304",true,"blake2s"]}"#
+                r#"{"jsonrpc":"2.0","id":1,"method":"syscoincreatenevmblob","params":["01020304",true,"keccak"]}"#
                     .to_string(),
             ))
             .with_status(200)
