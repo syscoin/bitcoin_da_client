@@ -508,16 +508,6 @@ impl SyscoinClient {
         Self::check_vh_batch_response_exists(&bytes, version_hashes)
     }
 
-    async fn blob_exists_in_cloud(&self, version_hash: &str) -> bool {
-        match self.blobs_exist_in_cloud(&[version_hash.to_string()]).await {
-            Ok(mut exists) => exists.pop().unwrap_or(false),
-            Err(err) => {
-                warn!("PODA fallback check_vh lookup failed: {}", err);
-                false
-            }
-        }
-    }
-
     /// Create a new Syscoin client
     pub fn new(
         rpc_url: &str,
@@ -861,15 +851,14 @@ impl SyscoinClient {
     ) -> Result<BlobFinalityState, SyscoinError> {
         let actual_blob_id = self.normalized_blob_id(blob_id);
         let Some(response) = self.blob_finality_response(actual_blob_id).await? else {
-            return if self.blob_exists_in_cloud(actual_blob_id).await {
-                warn!(
-                    "RPC finality lookup could not find blob {}; accepting PODA archive presence as finalized",
-                    actual_blob_id
-                );
-                Ok(BlobFinalityState::Finalized)
-            } else {
-                Ok(BlobFinalityState::Missing)
-            };
+            // SYSCOIN: PoDA proves retrievability only; it carries no chainlock or mined-height
+            // evidence. A missing canonical RPC record must therefore remain non-final even if
+            // an archive stores the bytes, or an untrusted archive could bypass Bitcoin finality.
+            warn!(
+                "RPC finality lookup could not find blob {}; treating it as missing because PoDA availability cannot establish chainlock finality",
+                actual_blob_id
+            );
+            return Ok(BlobFinalityState::Missing);
         };
 
         if response
@@ -942,13 +931,12 @@ impl SyscoinClient {
             Err(e) => {
                 let msg = e.to_string();
                 if Self::is_missing_blob_error(&msg) {
-                    if self.blob_exists_in_cloud(actual_blob_id).await {
-                        warn!(
-                            "RPC confirmation lookup could not find blob {}; accepting PODA archive presence as finalized",
-                            actual_blob_id
-                        );
-                        return Ok(BlobFinalityState::Finalized);
-                    }
+                    // SYSCOIN: PoDA availability has no block height and cannot satisfy a
+                    // confirmation policy. Only the canonical Syscoin RPC may establish it.
+                    warn!(
+                        "RPC confirmation lookup could not find blob {}; treating it as missing because PoDA availability cannot establish confirmations",
+                        actual_blob_id
+                    );
                     return Ok(BlobFinalityState::Missing);
                 }
                 return Err(e);
