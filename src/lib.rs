@@ -543,7 +543,8 @@ impl SyscoinClient {
 
         let data_hex = hex::encode(data);
         // pass positional args: data hex, overwrite_existing, hash type.
-        // Force blake2s to keep blob IDs aligned with Syscoin / OS expectations.
+        // SYSCOIN: zkSYS V32 commits to Blake2s hashes of its encoded DA chunks; use the explicit
+        // selector supported by current Syscoin so the returned IDs match that proving input.
         let params = vec![json!(data_hex), json!(overwrite_existing), json!("blake2s")];
         // SYSCOIN
         let response = self
